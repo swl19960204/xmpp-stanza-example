@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Stanza Demo</title>
+    <style>
+        html {
+            margin: 0px;
+            padding: 0px;
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Helvetica', 'Arial', sans-serif;
+            margin: 0px;
+            padding: 0px;
+            color: #224;
+            background-color: #fefefe;
+            width: 100%;
+            height: 100%;
+        }
+
+        #container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+        }
+
+        #xmppMessage {
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            position: relative;
+            flex-direction: column;
+            border-right: 1px solid #dedeee;
+        }
+
+        #xmppSend {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #logTitle {
+            font-size: 20px;
+            padding: 10px;
+            padding-left: 30px;
+            width: 100%;
+            background-color: #fafaff;
+            border-bottom: 1px solid #dedeee;
+            margin: 0px;
+            height: 20px;
+        }
+
+        #logMessage {
+            padding: 25px;
+            overflow: auto;
+            flex: 1;
+        }
+
+        #log {
+            padding: 25px;
+            overflow: auto;
+            flex: 1;
+        }
+
+        #log div {
+            padding: 10px;
+            padding-left: 25px;
+            padding-right: 25px;
+            z-index: 0;
+        }
+
+        #log h2 {
+            font-size: 16px;
+            position: relative;
+            left: -10px;
+            z-index: 0;
+        }
+
+        #log div:nth-child(2n + 1) {
+            background-color: #efefff;
+            border-radius: 5px;
+            border: 1px solid #cfcfff;
+        }
+
+        #settings {
+            font-size: 14px;
+            width: 100%;
+            margin: 0px;
+            padding: 10px;
+            padding-left: 30px;
+            background-color: #efefef;
+            border-top: 1px solid #dedede;
+        }
+
+        #settings h1 {
+            font-size: 20px;
+            margin: 0px;
+        }
+
+        #settings label {
+            margin-right: 20px;
+        }
+    </style>
+    <script src="./zed/stanza.browser.js"></script>
+</head>
+
+<body>
+    <div id="container">
+        <div id="xmppMessage">
+            <h1 id="logTitle">Events &amp; Data</h1>
+            <div id="log"></div>
+            <div id="settings">
+                <h1>Connection Settings</h1>
+                <form id="loginInfo">
+                    <label>JID: <input id="jid" type="text" name="jid" value="stanzaio@lance.im" /></label>
+                    <label>Password: <input id="password" type="password" name="password" /></label>
+                    <label>WebSocket/BOSH URL: <input id="url" type="text" name="url" value="" /></label>
+                    <input id="connect" type="submit" value="Connect" />
+                </form>
+            </div>
+        </div>
+        <div id="xmppSend">
+            <h1 id="logTitle">Events &amp; Send</h1>
+            <div id="logMessage"></div>
+            <div id="settings">
+                <form id="sendInfo">
+                    <label>发送消息: <input id="message" type="text" name="message" value="" /></label>
+                    <label>给: <input id="receive" type="text" name="receive" /></label>
+                    <input id="sendMessage" type="submit" value="Send" />
+                </form>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        function log(name, data) {
+            var container = document.getElementById('log');
+            var logEntry = document.createElement('div'),
+                header = document.createElement('h2'),
+                entry = document.createElement('p');
+
+
+            header.textContent = name;
+            logEntry.appendChild(header);
+
+            var code = document.createElement('code');
+            var codeData = document.createElement('pre');
+
+            if (typeof data === 'string') {
+                codeData.textContent = data;
+            } else {
+                if (name === 'connected' || name === 'disconnected') {
+                    codeData.textContent = '';
+                } else {
+                    codeData.textContent = JSON.stringify(data, null, '  ');
+                }
+            }
+
+            code.appendChild(codeData);
+            entry.appendChild(code);
+            logEntry.appendChild(entry);
+
+            container.appendChild(logEntry);
+            window.scrollTo(0, document.body.scrollHeight);
+        }
+
+        var client;
+        var loginInfo = document.getElementById('loginInfo');
+        loginInfo.onsubmit = function (e) {
+            if (e.preventDefault) e.preventDefault();
+
+            var jid = document.getElementById('jid').value;
+            var url = document.getElementById('url').value;
+
+            var transports = {
+                bosh: true,
+                websocket: true
+            };
+            if (url.indexOf('http') === 0) {
+                transports.bosh = url;
+                transports.websocket = false;
+            } else if (url.indexOf('ws') === 0) {
+                transports.websocket = url;
+                transports.bosh = false;
+            }
+
+            client = XMPP.createClient({
+                jid: jid,
+                password: document.getElementById('password').value,
+                transports: transports,
+                resource: 'fe'
+            });
+
+            const cachedSM = sessionStorage.cachedSM;
+            if (cachedSM) {
+                client.sm.load(JSON.parse(cachedSM, XMPP.Utils.reviveData));
+            }
+            client.sm.cache(state => {
+                sessionStorage.cachedSM = JSON.stringify(state);
+            });
+
+            client.on('*', log);
+
+            client.on('session:started', async () => {
+                try {
+                    await client.enableCarbons();
+                } catch (err) {
+                    console.log('Server does not support carbons');
+                }
+
+                await client.getRoster();
+                client.updateCaps();
+                client.sendPresence({
+                    legacyCapabilities: client.disco.getCaps()
+                });
+            });
+
+            client.on('message', msg => {
+                console.log("🚀 ~ file: App.js:87 ~ handleSubmit ~ msg:", msg)
+                logMessage(msg);
+            });
+
+            client.connect();
+
+            return false;
+        };
+
+
+        var sendInfo = document.getElementById('sendInfo');
+        function logMessage(msg) {
+            var container = document.getElementById('logMessage');
+            var logEntry = document.createElement('div'),
+                header = document.createElement('h2'),
+                entry = document.createElement('p');
+
+            header.textContent = msg.from;
+            logEntry.appendChild(header);
+
+            entry.textContent = msg.body;
+            logEntry.appendChild(entry);
+
+            container.appendChild(logEntry);
+        }
+
+
+        sendInfo.onsubmit = async function (e) {
+            if (e.preventDefault) e.preventDefault();
+            var message = document.getElementById('message').value;
+            var receive = document.getElementById('receive').value;
+            const id = await client.sendMessage({
+                to: receive,
+                body: message
+            })
+            message.value = '';
+            receive.value = '';
+        }
+
+    </script>
+</body>
+
+</html>
